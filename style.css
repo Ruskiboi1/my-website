@@ -1,0 +1,27 @@
+/* Your styles here */
+
+body {
+    font-family: 'Monospace';
+    background-color: #ffffff;
+}
+
+h1 {
+    color: #000000;
+}
+
+p1 {
+    color: #000000;
+}
+
+ul {
+    color: #007e61;
+
+}
+
+ol {
+    color: #007e61
+}
+
+a {
+    color:rgb(161, 118, 0)
+}
