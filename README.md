@@ -1,1 +1,1 @@
-my website's repo
+Copyright 2026 Sohaib Elmasri. All rights reserved. This code is provided for review only. No usage, modification, distribution, or reproduction is permitted for any purpose without explicit written permission
