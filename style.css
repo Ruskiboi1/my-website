@@ -2,15 +2,19 @@
 
 body {
     font-family: 'Monospace';
-    background-color: #ffffff;
+    background-color: #5eab58;
 }
 
 h1 {
-    color: #000000;
+    color: #722424;
 }
 
 p1 {
     color: #000000;
+}
+
+p3 {
+    color: #600606
 }
 
 ul {
@@ -20,8 +24,4 @@ ul {
 
 ol {
     color: #007e61
-}
-
-a {
-    color:rgb(161, 118, 0)
 }
