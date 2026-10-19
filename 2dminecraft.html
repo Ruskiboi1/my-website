@@ -1,0 +1,295 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Little Block World</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: #17212b; color: #eef6ff;
+    font: 14px system-ui, sans-serif; display: grid; place-items: center;
+    min-height: 100vh;
+  }
+  #wrap { width: min(100vw, 1000px); padding: 12px; }
+  #top {
+    display: flex; justify-content: space-between; gap: 12px;
+    align-items: center; margin-bottom: 8px; flex-wrap: wrap;
+  }
+  #help { color: #b9cad8; font-size: 12px; }
+  canvas {
+    display: block; width: 100%; height: auto; background: #80c9ed;
+    border: 3px solid #31485c; image-rendering: pixelated;
+    cursor: crosshair;
+  }
+  #bar { display:flex; gap:6px; margin-top:8px; }
+  .slot {
+    border:2px solid #536779; background:#253544; padding:5px 9px;
+    min-width:90px; border-radius:5px;
+  }
+  .slot.sel { border-color:#ffe36b; background:#3a4650; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="top">
+    <strong>🟩 Little Block World</strong>
+    <span id="status"></span>
+    <span id="help">A/D move · W/Space jump · click mine · right-click place · F attack · R restart</span>
+  </div>
+  <canvas id="game" width="960" height="540"></canvas>
+  <div id="bar"></div>
+</div>
+
+<script>
+(() => {
+  const canvas = document.getElementById("game");
+  const ctx = canvas.getContext("2d");
+  const status = document.getElementById("status");
+  const bar = document.getElementById("bar");
+
+  const S = 24, W = 180, H = 70;
+  const names = ["Grass", "Dirt", "Stone", "Wood"];
+  const colors = ["#6fbf4b", "#91603b", "#777d84", "#9b6538"];
+  const world = Array.from({length:H}, () => Array(W).fill(0));
+  const heights = [];
+  const keys = {};
+  let selected = 0, cameraX = 0, cameraY = 0, tick = 0;
+  let hp = 10, score = 0, dead = false;
+  const inventory = [24, 45, 18, 20];
+  const mobs = [];
+  const player = { x: 120, y: 100, w: 17, h: 30, vx: 0, vy: 0, grounded:false, facing:1, hurt:0 };
+
+  function rnd(n) { return Math.floor(Math.random()*n); }
+
+  function makeWorld() {
+    let h = 26;
+    for (let x=0; x<W; x++) {
+      h += Math.random()*3 - 1.5;
+      h = Math.max(18, Math.min(34, h));
+      heights[x] = Math.round(h);
+      for (let y=0; y<H; y++) {
+        if (y < heights[x]) world[y][x] = 0;
+        else if (y === heights[x]) world[y][x] = 1;
+        else if (y < heights[x]+4) world[y][x] = 2;
+        else world[y][x] = Math.random() < .08 ? 0 : 2;
+      }
+      // Small underground caverns
+      for (let y=heights[x]+7; y<H-3; y++)
+        if (Math.random() < .035) world[y][x] = 0;
+    }
+
+    // Trees
+    for (let x=5; x<W-5; x++) {
+      if (Math.random() < .09) {
+        const ground = heights[x], trunk = 3+rnd(3);
+        for (let y=ground-1; y>ground-1-trunk; y--) world[y][x] = 4;
+        const top = ground-trunk;
+        for (let yy=top-2; yy<=top+1; yy++)
+          for (let xx=x-2; xx<=x+2; xx++)
+            if (xx>=0 && xx<W && yy>=0 && Math.abs(xx-x)+Math.abs(yy-top)<4 && world[yy][xx]===0)
+              world[yy][xx]=5;
+      }
+    }
+  }
+
+  // Tile IDs: 0 air, 1 grass, 2 dirt, 3 stone, 4 wood, 5 leaves
+  function tileAt(tx,ty) {
+    if (tx<0 || tx>=W || ty>=H) return 3;
+    if (ty<0) return 0;
+    return world[ty][tx];
+  }
+  function solid(id) { return id!==0 && id!==5; }
+
+  function reset() {
+    for (const row of world) row.fill(0);
+    makeWorld();
+    player.x=120; player.y=80; player.vx=player.vy=0;
+    hp=10; score=0; dead=false; mobs.length=0; tick=0;
+    for (let i=0; i<9; i++) spawnMob(500+rnd(3500));
+  }
+
+  function spawnMob(x) {
+    const tx=Math.max(2,Math.min(W-3,Math.floor(x/S)));
+    mobs.push({x:tx*S, y:(heights[tx]-2)*S, w:22, h:18, vx:0, vy:0, hp:2, wait:rnd(100)});
+  }
+
+  function collides(x,y,w,h) {
+    const l=Math.floor(x/S), r=Math.floor((x+w-1)/S);
+    const t=Math.floor(y/S), b=Math.floor((y+h-1)/S);
+    for(let ty=t;ty<=b;ty++) for(let tx=l;tx<=r;tx++)
+      if(solid(tileAt(tx,ty))) return true;
+    return false;
+  }
+
+  function moveBody(o, dx, dy) {
+    o.x += dx;
+    if(collides(o.x,o.y,o.w,o.h)) { o.x -= dx; o.vx=0; }
+    o.y += dy;
+    if(collides(o.x,o.y,o.w,o.h)) {
+      o.y -= dy;
+      if(dy>0) o.grounded=true;
+      o.vy=0;
+    }
+  }
+
+  function jump() {
+    if(player.grounded && !dead) { player.vy=-9.5; player.grounded=false; }
+  }
+
+  function attack() {
+    if(dead) return;
+    const px=player.x+player.w/2, py=player.y+player.h/2;
+    let target=null, best=55;
+    for(const m of mobs) {
+      const d=Math.hypot((m.x+m.w/2)-px,(m.y+m.h/2)-py);
+      if(d<best && (m.x-px)*player.facing > -8) { target=m; best=d; }
+    }
+    if(target) {
+      target.hp--;
+      target.vx=player.facing*4; target.vy=-3;
+      if(target.hp<=0) { mobs.splice(mobs.indexOf(target),1); score++; }
+    }
+  }
+
+  function pointerTile(e) {
+    const r=canvas.getBoundingClientRect();
+    const sx=(e.clientX-r.left)*canvas.width/r.width;
+    const sy=(e.clientY-r.top)*canvas.height/r.height;
+    return {x:Math.floor((sx+cameraX)/S), y:Math.floor((sy+cameraY)/S)};
+  }
+
+  canvas.addEventListener("contextmenu", e=>e.preventDefault());
+  canvas.addEventListener("mousedown", e=>{
+    if(dead) return;
+    const p=pointerTile(e);
+    if(p.x<0||p.x>=W||p.y<0||p.y>=H) return;
+    if(e.button===0) {
+      const id=world[p.y][p.x];
+      if(id!==0) {
+        world[p.y][p.x]=0;
+        const kind=id===1?0:id===2?1:id===3?2:id===4?3:-1;
+        if(kind>=0) inventory[kind]++;
+      }
+    } else if(e.button===2) {
+      const id=[1,2,3,4][selected];
+      const px=player.x+player.w/2, py=player.y+player.h/2;
+      const bx=p.x*S+S/2, by=p.y*S+S/2;
+      if(inventory[selected]>0 && world[p.y][p.x]===0 &&
+         Math.hypot(px-bx,py-by)<115 &&
+         !(p.x*S<player.x+player.w && (p.x+1)*S>player.x &&
+           p.y*S<player.y+player.h && (p.y+1)*S>player.y)) {
+        world[p.y][p.x]=id; inventory[selected]--;
+      }
+    }
+  });
+
+  addEventListener("keydown", e=>{
+    keys[e.key.toLowerCase()]=true;
+    if([" ","arrowup","arrowleft","arrowright"].includes(e.key.toLowerCase())) e.preventDefault();
+    if(e.repeat) return;
+    if(e.key===" "||e.key.toLowerCase()==="w"||e.key==="ArrowUp") jump();
+    if(e.key.toLowerCase()==="f") attack();
+    if(e.key.toLowerCase()==="r") reset();
+    if("1234".includes(e.key)) { selected=Number(e.key)-1; updateBar(); }
+  });
+  addEventListener("keyup", e=>keys[e.key.toLowerCase()]=false);
+
+  function updateBar() {
+    bar.innerHTML="";
+    names.forEach((n,i)=>{
+      const d=document.createElement("div");
+      d.className="slot"+(i===selected?" sel":"");
+      d.textContent=`${i+1} · ${n} (${inventory[i]})`;
+      bar.appendChild(d);
+    });
+  }
+
+  function update() {
+    tick++;
+    if(!dead) {
+      const left=keys.a||keys.arrowleft, right=keys.d||keys.arrowright;
+      player.vx=(right?2.8:0)-(left?2.8:0);
+      if(player.vx) player.facing=Math.sign(player.vx);
+      player.vy=Math.min(11,player.vy+.42);
+      player.grounded=false;
+      moveBody(player,player.vx,0);
+      moveBody(player,0,player.vy);
+      if(player.y>H*S) { hp=0; dead=true; }
+
+      for(const m of mobs) {
+        m.wait--;
+        if(m.wait<=0) { m.vx=Math.sign(player.x-m.x)*1.25; m.wait=30+rnd(60); }
+        m.vy=Math.min(10,m.vy+.4);
+        moveBody(m,m.vx,m.vy);
+        if(Math.abs(player.x-m.x)<25 && Math.abs(player.y-m.y)<25 && player.hurt<=0) {
+          hp--; player.hurt=55; player.vy=-5; player.vx=player.x<m.x?-4:4;
+          if(hp<=0) dead=true;
+        }
+      }
+      if(player.hurt>0) player.hurt--;
+    }
+
+    cameraX=Math.max(0,Math.min(W*S-canvas.width,player.x-canvas.width/2));
+    cameraY=Math.max(0,Math.min(H*S-canvas.height,player.y-canvas.height/2));
+    updateBar();
+  }
+
+  function draw() {
+    const daylight=(Math.sin(tick/600)+1)/2;
+    ctx.fillStyle=`rgb(${Math.round(20+daylight*108)},${Math.round(34+daylight*165)},${Math.round(70+daylight*180)})`;
+    ctx.fillRect(0,0,canvas.width,canvas.height);
+
+    // Sun and moon
+    ctx.fillStyle="#fff3a6";
+    ctx.beginPath(); ctx.arc(90+daylight*700,85,22,0,Math.PI*2); ctx.fill();
+
+    const x0=Math.max(0,Math.floor(cameraX/S)), x1=Math.min(W,Math.ceil((cameraX+canvas.width)/S));
+    const y0=Math.max(0,Math.floor(cameraY/S)), y1=Math.min(H,Math.ceil((cameraY+canvas.height)/S));
+    for(let y=y0;y<y1;y++) for(let x=x0;x<x1;x++) {
+      const id=world[y][x]; if(!id) continue;
+      const sx=x*S-cameraX, sy=y*S-cameraY;
+      const c=id===1?colors[0]:id===2?colors[1]:id===3?colors[2]:id===4?colors[3]:"#397d41";
+      ctx.fillStyle=c; ctx.fillRect(sx,sy,S,S);
+      ctx.fillStyle="rgba(255,255,255,.12)"; ctx.fillRect(sx,sy,S,3);
+      ctx.strokeStyle="rgba(0,0,0,.12)"; ctx.strokeRect(sx,sy,S,S);
+      if(id===1) { ctx.fillStyle="#56a83c"; ctx.fillRect(sx,sy,S,5); }
+    }
+
+    for(const m of mobs) {
+      const sx=m.x-cameraX, sy=m.y-cameraY;
+      ctx.fillStyle="#55d676"; ctx.fillRect(sx,sy,m.w,m.h);
+      ctx.fillStyle="#eaffef"; ctx.fillRect(sx+4,sy+5,4,4); ctx.fillRect(sx+14,sy+5,4,4);
+      ctx.fillStyle="#173b27"; ctx.fillRect(sx+5,sy+6,2,2); ctx.fillRect(sx+15,sy+6,2,2);
+    }
+
+    if(!player.hurt || Math.floor(tick/5)%2===0) {
+      const sx=player.x-cameraX, sy=player.y-cameraY;
+      ctx.fillStyle="#315bd8"; ctx.fillRect(sx+2,sy+10,13,20);
+      ctx.fillStyle="#f2c18d"; ctx.fillRect(sx+1,sy,15,12);
+      ctx.fillStyle="#68452e"; ctx.fillRect(sx,sy,17,4);
+      ctx.fillStyle="#182b44"; ctx.fillRect(sx+(player.facing>0?11:4),sy+5,3,3);
+    }
+
+    // HUD
+    ctx.fillStyle="rgba(0,0,0,.45)"; ctx.fillRect(10,10,165,48);
+    ctx.fillStyle="#fff"; ctx.font="15px system-ui";
+    ctx.fillText("Health: "+ "♥".repeat(Math.max(0,hp))+"♡".repeat(Math.max(0,10-hp)),18,30);
+    ctx.fillText("Slimes defeated: "+score,18,49);
+
+    if(dead) {
+      ctx.fillStyle="rgba(0,0,0,.66)"; ctx.fillRect(0,0,canvas.width,canvas.height);
+      ctx.fillStyle="#fff"; ctx.textAlign="center";
+      ctx.font="bold 38px system-ui"; ctx.fillText("You were bonked!",canvas.width/2,canvas.height/2-8);
+      ctx.font="18px system-ui"; ctx.fillText("Press R to make a new world",canvas.width/2,canvas.height/2+28);
+      ctx.textAlign="left";
+    }
+    status.textContent=dead?"Game over · press R to restart":`♥ ${hp}/10 · Slimes ${score} · ${daylight>.35?"Day":"Night"}`;
+  }
+
+  function loop() { update(); draw(); requestAnimationFrame(loop); }
+  reset(); updateBar(); loop();
+})();
+</script>
+</body>
+</html>
