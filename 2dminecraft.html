@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Little Block World - Expanded</title>
+<title>Little Block World - Audio Edition</title>
 <style>
   * { box-sizing: border-box; }
   body {
@@ -53,7 +53,7 @@
   <div id="top">
     <strong>🟩 Little Block World EX</strong>
     <span id="status"></span>
-    <span id="help">A/D move · W/Space jump · Left-Click mine/attack · Right-Click place/use · E craft · R restart</span>
+    <span id="help">A/D move · W/Space jump · Left-Click mine/attack · Right-Click place/use · E craft · M music · R restart</span>
   </div>
   <canvas id="game" width="960" height="540"></canvas>
   <div id="bar"></div>
@@ -76,7 +76,6 @@
   const S = 24, W = 180, H = 70;
   
   // Tile Definitions
-  // 0: Air, 1: Grass, 2: Dirt, 3: Stone, 4: Wood, 5: Leaves, 6: Coal Ore, 7: Iron Ore, 8: Furnace
   const TILE = { AIR:0, GRASS:1, DIRT:2, STONE:3, WOOD:4, LEAVES:5, COAL:6, IRON:7, FURNACE:8 };
   const tileColors = {
     [TILE.GRASS]: "#6fbf4b", [TILE.DIRT]: "#91603b", [TILE.STONE]: "#777d84",
@@ -86,14 +85,12 @@
 
   // Item Registry
   const ITEMS = {
-    // Blocks
     grass: { name: "Grass", block: TILE.GRASS },
     dirt: { name: "Dirt", block: TILE.DIRT },
     stone: { name: "Stone", block: TILE.STONE },
     wood: { name: "Wood", block: TILE.WOOD },
     furnace: { name: "Furnace", block: TILE.FURNACE },
     
-    // Materials
     coal: { name: "Coal" },
     raw_iron: { name: "Raw Iron" },
     iron_ingot: { name: "Iron Ingot" },
@@ -102,7 +99,6 @@
     stick: { name: "Stick" },
     raw_beef: { name: "Raw Beef", food: 3 },
 
-    // Weapons/Tools
     wood_pick: { name: "Wood Pick", tool: "pick", tier: 1 },
     stone_pick: { name: "Stone Pick", tool: "pick", tier: 2 },
     iron_pick: { name: "Iron Pick", tool: "pick", tier: 3 },
@@ -127,16 +123,76 @@
     { id: "arrow", req: { stick: 1, feather: 1, coal: 1 }, yield: 4 }
   ];
 
+  // ==========================================
+  // AUDIO & MUSIC ENGINE (Web Audio API)
+  // ==========================================
+  let audioCtx = null;
+  let musicMuted = false;
+  let musicStep = 0;
+  let musicInterval = null;
+
+  function initAudio() {
+    if (!audioCtx) {
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      startMusic();
+    }
+  }
+
+  function playTone(freq, duration, type="square", volume=0.05) {
+    if (!audioCtx || musicMuted) return;
+    try {
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = type;
+      osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+      gain.gain.setValueAtTime(volume, audioCtx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      osc.start();
+      osc.stop(audioCtx.currentTime + duration);
+    } catch(e) {}
+  }
+
+  // Sound Effects
+  function sfxJump() { playTone(180, 0.15, "square", 0.04); }
+  function sfxMine() { playTone(100, 0.08, "triangle", 0.08); }
+  function sfxAttack() { playTone(300, 0.1, "sawtooth", 0.05); }
+  function sfxEat() { playTone(450, 0.2, "sine", 0.06); }
+
+  // Background Music Melody Sequencer (Chiptune Style Loop)
+  const notes = {
+    C3: 130.81, E3: 164.81, G3: 196.00, A3: 220.00, B3: 246.94,
+    C4: 261.63, D4: 293.66, E4: 329.63, F4: 349.23, G4: 392.00, A4: 440.00
+  };
+  
+  const melody = [
+    notes.C4, notes.E4, notes.G4, notes.C4, notes.E4, notes.G4, notes.B3, notes.E4,
+    notes.A3, notes.C4, notes.E4, notes.A3, notes.F3, notes.A3, notes.C4, notes.F3,
+    notes.C4, notes.E4, notes.G4, notes.C4, notes.D4, notes.F4, notes.A4, notes.D4,
+    notes.G3, notes.B3, notes.D4, notes.G3, notes.C4, null,     notes.G3, null
+  ];
+
+  function startMusic() {
+    if (musicInterval) clearInterval(musicInterval);
+    musicInterval = setInterval(() => {
+      if (dead || musicMuted) return;
+      const note = melody[musicStep % melody.length];
+      if (note) playTone(note, 0.2, "triangle", 0.02);
+      musicStep++;
+    }, 220);
+  }
+
+  // ==========================================
+  // GAME CODE
+  // ==========================================
   const world = Array.from({length:H}, () => Array(W).fill(0));
   const heights = [];
   const keys = {};
   let selected = 0, cameraX = 0, cameraY = 0, tick = 0;
   let hp = 10, maxHp = 10, dead = false, craftingOpen = false;
   
-  // Inventory Map: { itemId: quantity }
-  const inventory = {
-    wood: 10, dirt: 12, stone: 8, stick: 4
-  };
+  const inventory = { wood: 10, dirt: 12, stone: 8, stick: 4 };
   const hotbar = ["wood", "dirt", "stone", "stick", null, null, null, null, null];
 
   const mobs = [];
@@ -166,7 +222,6 @@
         if (Math.random() < .035) world[y][x] = TILE.AIR;
     }
 
-    // Trees
     for (let x=5; x<W-5; x++) {
       if (Math.random() < .09) {
         const ground = heights[x], trunk = 3+rnd(3);
@@ -193,7 +248,6 @@
     player.x=120; player.y=80; player.vx=player.vy=0;
     hp=10; dead=false; mobs.length=0; arrows.length=0; tick=0;
     
-    // Initial mobs
     for (let i=0; i<4; i++) spawnMob("slime", 400+rnd(3000));
     for (let i=0; i<3; i++) spawnMob("spider", 500+rnd(3000));
     for (let i=0; i<5; i++) spawnMob("cow", 300+rnd(3200));
@@ -247,7 +301,10 @@
   }
 
   function jump() {
-    if(player.grounded && !dead) { player.vy=-9.5; player.grounded=false; }
+    if(player.grounded && !dead) {
+      player.vy=-9.5; player.grounded=false;
+      sfxJump();
+    }
   }
 
   function getHeldItem() {
@@ -259,10 +316,10 @@
     if(dead) return;
     const item = getHeldItem();
 
-    // Bow Attack
     if (item && item.id === "bow") {
       if ((inventory["arrow"] || 0) > 0) {
         removeItem("arrow", 1);
+        sfxAttack();
         arrows.push({
           x: player.x + player.w/2, y: player.y + 10,
           vx: player.facing * 11, vy: -1.5,
@@ -272,7 +329,6 @@
       return;
     }
 
-    // Melee Attack
     const px = player.x + player.w/2, py = player.y + player.h/2;
     let reach = item && item.range ? item.range : 48;
     let damage = item && item.dmg ? item.dmg : 1;
@@ -283,11 +339,11 @@
       if (d < best && (m.x-px)*player.facing > -12) { target = m; best = d; }
     }
 
+    sfxAttack();
     if (target) {
       target.hp -= damage;
       target.vx = player.facing * 4; target.vy = -3;
       if (target.hp <= 0) {
-        // Drop items
         if (target.type === "cow") addItem("raw_beef", 1 + rnd(2));
         if (target.type === "chicken") addItem("feather", 1 + rnd(2));
         if (target.type === "spider") addItem("string", 1 + rnd(2));
@@ -305,11 +361,12 @@
 
   canvas.addEventListener("contextmenu", e=>e.preventDefault());
   canvas.addEventListener("mousedown", e=>{
+    initAudio();
     if(dead || craftingOpen) return;
     const p=pointerTile(e);
     if(p.x<0||p.x>=W||p.y<0||p.y>=H) return;
 
-    if(e.button===0) { // Left-click: Mine or Attack
+    if(e.button===0) {
       const px=player.x+player.w/2, py=player.y+player.h/2;
       const bx=p.x*S+S/2, by=p.y*S+S/2;
       
@@ -318,11 +375,10 @@
         if(id!==TILE.AIR) {
           const held = getHeldItem();
           const pickTier = held && held.tool === "pick" ? held.tier : 0;
-
-          // Check tool requirements
-          if (id === TILE.IRON && pickTier < 2) return; // Iron requires Stone Pick+
+          if (id === TILE.IRON && pickTier < 2) return;
 
           world[p.y][p.x] = TILE.AIR;
+          sfxMine();
           if (id === TILE.GRASS) addItem("dirt");
           else if (id === TILE.DIRT) addItem("dirt");
           else if (id === TILE.STONE) addItem("stone");
@@ -334,28 +390,27 @@
           attackOrAction();
         }
       }
-    } else if(e.button===2) { // Right-click: Place or Use Block/Furnace/Food
+    } else if(e.button===2) {
       const held = getHeldItem();
       if (!held) return;
 
-      // Eat Food
       if (held.food && hp < maxHp) {
         hp = Math.min(maxHp, hp + held.food);
         removeItem(held.id, 1);
+        sfxEat();
         return;
       }
 
-      // Smelt at Furnace
       if (world[p.y][p.x] === TILE.FURNACE) {
         if ((inventory["raw_iron"] || 0) > 0 && (inventory["coal"] || 0) > 0) {
           removeItem("raw_iron", 1);
           removeItem("coal", 1);
           addItem("iron_ingot", 1);
+          sfxMine();
         }
         return;
       }
 
-      // Place Block
       if (held.block) {
         const px=player.x+player.w/2, py=player.y+player.h/2;
         const bx=p.x*S+S/2, by=p.y*S+S/2;
@@ -364,12 +419,14 @@
              p.y*S<player.y+player.h && (p.y+1)*S>player.y)) {
           world[p.y][p.x] = held.block;
           removeItem(held.id, 1);
+          sfxMine();
         }
       }
     }
   });
 
   addEventListener("keydown", e=>{
+    initAudio();
     const k = e.key.toLowerCase();
     keys[k] = true;
     if([" ","arrowup","arrowleft","arrowright"].includes(k)) e.preventDefault();
@@ -377,6 +434,7 @@
     if(k===" "||k==="w"||k==="arrowup") jump();
     if(k==="r") reset();
     if(k==="e") toggleCrafting();
+    if(k==="m") { musicMuted = !musicMuted; }
     if("123456789".includes(k)) { selected = Number(k)-1; updateBar(); }
   });
   addEventListener("keyup", e=>keys[e.key.toLowerCase()]=false);
@@ -408,6 +466,7 @@
         btn.onclick = () => {
           for (const [reqId, qty] of Object.entries(r.req)) removeItem(reqId, qty);
           addItem(r.id, r.yield || 1);
+          sfxEat();
           renderCrafting();
           updateBar();
         };
@@ -440,45 +499,42 @@
       moveBody(player,0,player.vy);
       if(player.y>H*S) { hp=0; dead=true; }
 
-      // Mobs logic
       for(const m of mobs) {
         m.wait--;
         if(m.wait<=0) {
           if (m.type === "slime" || m.type === "spider") {
             m.vx = Math.sign(player.x - m.x) * (m.type === "spider" ? 1.8 : 1.2);
-            if (m.type === "spider" && collides(m.x + m.vx*5, m.y, m.w, m.h)) m.vy = -6; // Spider climb
+            if (m.type === "spider" && collides(m.x + m.vx*5, m.y, m.w, m.h)) m.vy = -6;
           } else {
-            m.vx = (Math.random() - 0.5) * 1.5; // Passive wander
+            m.vx = (Math.random() - 0.5) * 1.5;
           }
           m.wait = 40 + rnd(80);
         }
         m.vy = Math.min(10, m.vy + .4);
         moveBody(m, m.vx, m.vy);
 
-        // Hostile attack player
         if ((m.type === "slime" || m.type === "spider") &&
             Math.abs(player.x-m.x)<22 && Math.abs(player.y-m.y)<22 && player.hurt<=0) {
           hp -= (m.type === "spider" ? 2 : 1);
           player.hurt = 50; player.vy = -5; player.vx = player.x < m.x ? -4 : 4;
+          sfxAttack();
           if(hp<=0) dead=true;
         }
       }
 
-      // Arrows physics
       for (let i = arrows.length - 1; i >= 0; i--) {
         const a = arrows[i];
         a.x += a.vx; a.y += a.vy; a.vy += 0.2; a.life--;
 
-        // Arrow collision with solid ground
         if (collides(a.x, a.y, 4, 4) || a.life <= 0) {
           arrows.splice(i, 1);
           continue;
         }
 
-        // Arrow collision with mobs
         for (const m of mobs) {
           if (a.x > m.x && a.x < m.x + m.w && a.y > m.y && a.y < m.y + m.h) {
             m.hp -= 3; m.vx = Math.sign(a.vx) * 3; m.vy = -2;
+            sfxAttack();
             if (m.hp <= 0) {
               if (m.type === "cow") addItem("raw_beef", 1 + rnd(2));
               if (m.type === "chicken") addItem("feather", 1 + rnd(2));
@@ -504,11 +560,9 @@
     ctx.fillStyle=`rgb(${Math.round(20+daylight*108)},${Math.round(34+daylight*165)},${Math.round(70+daylight*180)})`;
     ctx.fillRect(0,0,canvas.width,canvas.height);
 
-    // Sun & Moon
     ctx.fillStyle="#fff3a6";
     ctx.beginPath(); ctx.arc(90+daylight*700,85,22,0,Math.PI*2); ctx.fill();
 
-    // Map Rendering
     const x0=Math.max(0,Math.floor(cameraX/S)), x1=Math.min(W,Math.ceil((cameraX+canvas.width)/S));
     const y0=Math.max(0,Math.floor(cameraY/S)), y1=Math.min(H,Math.ceil((cameraY+canvas.height)/S));
     for(let y=y0;y<y1;y++) for(let x=x0;x<x1;x++) {
@@ -521,7 +575,6 @@
       if(id===TILE.GRASS) { ctx.fillStyle="#56a83c"; ctx.fillRect(sx,sy,S,5); }
     }
 
-    // Render Mobs
     for(const m of mobs) {
       const sx=m.x-cameraX, sy=m.y-cameraY;
       if (m.type === "slime") {
@@ -539,13 +592,11 @@
       }
     }
 
-    // Render Projectiles (Arrows)
     ctx.fillStyle = "#fff";
     for (const a of arrows) {
       ctx.fillRect(a.x - cameraX, a.y - cameraY, 5, 2);
     }
 
-    // Render Player
     if(!player.hurt || Math.floor(tick/5)%2===0) {
       const sx=player.x-cameraX, sy=player.y-cameraY;
       ctx.fillStyle="#315bd8"; ctx.fillRect(sx+2,sy+10,13,20);
@@ -554,8 +605,7 @@
       ctx.fillStyle="#182b44"; ctx.fillRect(sx+(player.facing>0?11:4),sy+5,3,3);
     }
 
-    // HUD
-    ctx.fillStyle="rgba(0,0,0,.5)"; ctx.fillRect(10,10,190,40);
+    ctx.fillStyle="rgba(0,0,0,.5)"; ctx.fillRect(10,10,210,40);
     ctx.fillStyle="#fff"; ctx.font="14px system-ui";
     ctx.fillText("Health: "+ "♥".repeat(Math.max(0,hp))+"♡".repeat(Math.max(0,10-hp)),18,34);
 
@@ -566,7 +616,7 @@
       ctx.font="16px system-ui"; ctx.fillText("Press R to Respawn",canvas.width/2,canvas.height/2+25);
       ctx.textAlign="left";
     }
-    status.textContent=dead?"Game Over":`♥ ${hp}/10 · ${daylight>.35?"Daytime":"Nighttime"}`;
+    status.textContent=dead?"Game Over":`♥ ${hp}/10 · ${daylight>.35?"Daytime":"Nighttime"} · Music: ${musicMuted?"OFF":"ON"}`;
   }
 
   function loop() { update(); draw(); requestAnimationFrame(loop); }
