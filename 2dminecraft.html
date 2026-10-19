@@ -3,15 +3,15 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Little Block World</title>
+<title>Little Block World - Expanded</title>
 <style>
   * { box-sizing: border-box; }
   body {
-    margin: 0; background: #17212b; color: #eef6ff;
+    margin: 0; background: #121820; color: #eef6ff;
     font: 14px system-ui, sans-serif; display: grid; place-items: center;
-    min-height: 100vh;
+    min-height: 100vh; user-select: none;
   }
-  #wrap { width: min(100vw, 1000px); padding: 12px; }
+  #wrap { width: min(100vw, 1000px); padding: 12px; position: relative; }
   #top {
     display: flex; justify-content: space-between; gap: 12px;
     align-items: center; margin-bottom: 8px; flex-wrap: wrap;
@@ -22,23 +22,46 @@
     border: 3px solid #31485c; image-rendering: pixelated;
     cursor: crosshair;
   }
-  #bar { display:flex; gap:6px; margin-top:8px; }
+  #bar { display:flex; gap:4px; margin-top:8px; flex-wrap: wrap; }
   .slot {
-    border:2px solid #536779; background:#253544; padding:5px 9px;
-    min-width:90px; border-radius:5px;
+    border:2px solid #536779; background:#253544; padding:4px 6px;
+    min-width:85px; border-radius:5px; text-align: center; font-size: 11px;
   }
-  .slot.sel { border-color:#ffe36b; background:#3a4650; }
+  .slot.sel { border-color:#ffe36b; background:#3a4650; font-weight: bold; }
+  
+  /* Crafting Overlay */
+  #craft-menu {
+    position: absolute; top: 50px; left: 50%; transform: translateX(-50%);
+    width: 90%; max-width: 600px; background: rgba(23, 33, 43, 0.95);
+    border: 3px solid #536779; border-radius: 8px; padding: 16px;
+    display: none; box-shadow: 0 10px 30px rgba(0,0,0,0.5); z-index: 10;
+  }
+  #craft-menu.open { display: block; }
+  #craft-menu h2 { margin: 0 0 12px 0; font-size: 18px; color: #ffe36b; text-align: center; }
+  .craft-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 8px; }
+  .craft-btn {
+    background: #253544; border: 1px solid #536779; color: #fff; padding: 8px;
+    border-radius: 4px; cursor: pointer; text-align: center; font-size: 12px;
+  }
+  .craft-btn:hover { background: #3a4650; border-color: #ffe36b; }
+  .craft-btn.disabled { opacity: 0.4; cursor: not-allowed; border-color: #444; }
+  .craft-cost { font-size: 10px; color: #b9cad8; margin-top: 4px; }
 </style>
 </head>
 <body>
 <div id="wrap">
   <div id="top">
-    <strong>🟩 Little Block World</strong>
+    <strong>🟩 Little Block World EX</strong>
     <span id="status"></span>
-    <span id="help">A/D move · W/Space jump · click mine · right-click place · F attack · R restart</span>
+    <span id="help">A/D move · W/Space jump · Left-Click mine/attack · Right-Click place/use · E craft · R restart</span>
   </div>
   <canvas id="game" width="960" height="540"></canvas>
   <div id="bar"></div>
+
+  <div id="craft-menu">
+    <h2>🛠️ Crafting Bench</h2>
+    <div class="craft-grid" id="craft-grid"></div>
+  </div>
 </div>
 
 <script>
@@ -47,17 +70,77 @@
   const ctx = canvas.getContext("2d");
   const status = document.getElementById("status");
   const bar = document.getElementById("bar");
+  const craftMenu = document.getElementById("craft-menu");
+  const craftGrid = document.getElementById("craft-grid");
 
   const S = 24, W = 180, H = 70;
-  const names = ["Grass", "Dirt", "Stone", "Wood"];
-  const colors = ["#6fbf4b", "#91603b", "#777d84", "#9b6538"];
+  
+  // Tile Definitions
+  // 0: Air, 1: Grass, 2: Dirt, 3: Stone, 4: Wood, 5: Leaves, 6: Coal Ore, 7: Iron Ore, 8: Furnace
+  const TILE = { AIR:0, GRASS:1, DIRT:2, STONE:3, WOOD:4, LEAVES:5, COAL:6, IRON:7, FURNACE:8 };
+  const tileColors = {
+    [TILE.GRASS]: "#6fbf4b", [TILE.DIRT]: "#91603b", [TILE.STONE]: "#777d84",
+    [TILE.WOOD]: "#9b6538", [TILE.LEAVES]: "#397d41", [TILE.COAL]: "#4a4e52",
+    [TILE.IRON]: "#b89778", [TILE.FURNACE]: "#575d63"
+  };
+
+  // Item Registry
+  const ITEMS = {
+    // Blocks
+    grass: { name: "Grass", block: TILE.GRASS },
+    dirt: { name: "Dirt", block: TILE.DIRT },
+    stone: { name: "Stone", block: TILE.STONE },
+    wood: { name: "Wood", block: TILE.WOOD },
+    furnace: { name: "Furnace", block: TILE.FURNACE },
+    
+    // Materials
+    coal: { name: "Coal" },
+    raw_iron: { name: "Raw Iron" },
+    iron_ingot: { name: "Iron Ingot" },
+    string: { name: "String" },
+    feather: { name: "Feather" },
+    stick: { name: "Stick" },
+    raw_beef: { name: "Raw Beef", food: 3 },
+
+    // Weapons/Tools
+    wood_pick: { name: "Wood Pick", tool: "pick", tier: 1 },
+    stone_pick: { name: "Stone Pick", tool: "pick", tier: 2 },
+    iron_pick: { name: "Iron Pick", tool: "pick", tier: 3 },
+    wood_sword: { name: "Wood Sword", dmg: 2, range: 60 },
+    stone_sword: { name: "Stone Sword", dmg: 3.5, range: 65 },
+    iron_sword: { name: "Iron Sword", dmg: 5, range: 75 },
+    bow: { name: "Bow" },
+    arrow: { name: "Arrow", qty: 4 }
+  };
+
+  // Recipes
+  const RECIPES = [
+    { id: "stick", req: { wood: 1 }, yield: 4 },
+    { id: "furnace", req: { stone: 8 }, yield: 1 },
+    { id: "wood_pick", req: { wood: 3, stick: 2 }, yield: 1 },
+    { id: "stone_pick", req: { stone: 3, stick: 2 }, yield: 1 },
+    { id: "iron_pick", req: { iron_ingot: 3, stick: 2 }, yield: 1 },
+    { id: "wood_sword", req: { wood: 2, stick: 1 }, yield: 1 },
+    { id: "stone_sword", req: { stone: 2, stick: 1 }, yield: 1 },
+    { id: "iron_sword", req: { iron_ingot: 2, stick: 1 }, yield: 1 },
+    { id: "bow", req: { stick: 3, string: 3 }, yield: 1 },
+    { id: "arrow", req: { stick: 1, feather: 1, coal: 1 }, yield: 4 }
+  ];
+
   const world = Array.from({length:H}, () => Array(W).fill(0));
   const heights = [];
   const keys = {};
   let selected = 0, cameraX = 0, cameraY = 0, tick = 0;
-  let hp = 10, score = 0, dead = false;
-  const inventory = [24, 45, 18, 20];
+  let hp = 10, maxHp = 10, dead = false, craftingOpen = false;
+  
+  // Inventory Map: { itemId: quantity }
+  const inventory = {
+    wood: 10, dirt: 12, stone: 8, stick: 4
+  };
+  const hotbar = ["wood", "dirt", "stone", "stick", null, null, null, null, null];
+
   const mobs = [];
+  const arrows = [];
   const player = { x: 120, y: 100, w: 17, h: 30, vx: 0, vy: 0, grounded:false, facing:1, hurt:0 };
 
   function rnd(n) { return Math.floor(Math.random()*n); }
@@ -69,49 +152,79 @@
       h = Math.max(18, Math.min(34, h));
       heights[x] = Math.round(h);
       for (let y=0; y<H; y++) {
-        if (y < heights[x]) world[y][x] = 0;
-        else if (y === heights[x]) world[y][x] = 1;
-        else if (y < heights[x]+4) world[y][x] = 2;
-        else world[y][x] = Math.random() < .08 ? 0 : 2;
+        if (y < heights[x]) world[y][x] = TILE.AIR;
+        else if (y === heights[x]) world[y][x] = TILE.GRASS;
+        else if (y < heights[x]+4) world[y][x] = TILE.DIRT;
+        else {
+          const r = Math.random();
+          if (r < 0.04) world[y][x] = TILE.COAL;
+          else if (r < 0.075) world[y][x] = TILE.IRON;
+          else world[y][x] = TILE.STONE;
+        }
       }
-      // Small underground caverns
       for (let y=heights[x]+7; y<H-3; y++)
-        if (Math.random() < .035) world[y][x] = 0;
+        if (Math.random() < .035) world[y][x] = TILE.AIR;
     }
 
     // Trees
     for (let x=5; x<W-5; x++) {
       if (Math.random() < .09) {
         const ground = heights[x], trunk = 3+rnd(3);
-        for (let y=ground-1; y>ground-1-trunk; y--) world[y][x] = 4;
+        for (let y=ground-1; y>ground-1-trunk; y--) world[y][x] = TILE.WOOD;
         const top = ground-trunk;
         for (let yy=top-2; yy<=top+1; yy++)
           for (let xx=x-2; xx<=x+2; xx++)
-            if (xx>=0 && xx<W && yy>=0 && Math.abs(xx-x)+Math.abs(yy-top)<4 && world[yy][xx]===0)
-              world[yy][xx]=5;
+            if (xx>=0 && xx<W && yy>=0 && Math.abs(xx-x)+Math.abs(yy-top)<4 && world[yy][xx]===TILE.AIR)
+              world[yy][xx] = TILE.LEAVES;
       }
     }
   }
 
-  // Tile IDs: 0 air, 1 grass, 2 dirt, 3 stone, 4 wood, 5 leaves
   function tileAt(tx,ty) {
-    if (tx<0 || tx>=W || ty>=H) return 3;
-    if (ty<0) return 0;
+    if (tx<0 || tx>=W || ty>=H) return TILE.STONE;
+    if (ty<0) return TILE.AIR;
     return world[ty][tx];
   }
-  function solid(id) { return id!==0 && id!==5; }
+  function solid(id) { return id !== TILE.AIR && id !== TILE.LEAVES; }
 
   function reset() {
     for (const row of world) row.fill(0);
     makeWorld();
     player.x=120; player.y=80; player.vx=player.vy=0;
-    hp=10; score=0; dead=false; mobs.length=0; tick=0;
-    for (let i=0; i<9; i++) spawnMob(500+rnd(3500));
+    hp=10; dead=false; mobs.length=0; arrows.length=0; tick=0;
+    
+    // Initial mobs
+    for (let i=0; i<4; i++) spawnMob("slime", 400+rnd(3000));
+    for (let i=0; i<3; i++) spawnMob("spider", 500+rnd(3000));
+    for (let i=0; i<5; i++) spawnMob("cow", 300+rnd(3200));
+    for (let i=0; i<5; i++) spawnMob("chicken", 300+rnd(3200));
   }
 
-  function spawnMob(x) {
-    const tx=Math.max(2,Math.min(W-3,Math.floor(x/S)));
-    mobs.push({x:tx*S, y:(heights[tx]-2)*S, w:22, h:18, vx:0, vy:0, hp:2, wait:rnd(100)});
+  function spawnMob(type, x) {
+    const tx = Math.max(2, Math.min(W-3, Math.floor(x/S)));
+    const y = (heights[tx]-2)*S;
+    if(type === "slime") mobs.push({ type, x:tx*S, y, w:22, h:18, vx:0, vy:0, hp:3, wait:rnd(100) });
+    else if(type === "spider") mobs.push({ type, x:tx*S, y, w:26, h:14, vx:0, vy:0, hp:4, wait:rnd(80) });
+    else if(type === "cow") mobs.push({ type, x:tx*S, y, w:28, h:22, vx:0, vy:0, hp:5, wait:rnd(120) });
+    else if(type === "chicken") mobs.push({ type, x:tx*S, y, w:16, h:16, vx:0, vy:0, hp:2, wait:rnd(100) });
+  }
+
+  function addItem(id, qty=1) {
+    inventory[id] = (inventory[id] || 0) + qty;
+    if (!hotbar.includes(id)) {
+      const emptySlot = hotbar.indexOf(null);
+      if (emptySlot !== -1) hotbar[emptySlot] = id;
+    }
+  }
+
+  function removeItem(id, qty=1) {
+    if (!inventory[id]) return;
+    inventory[id] -= qty;
+    if (inventory[id] <= 0) {
+      delete inventory[id];
+      const slot = hotbar.indexOf(id);
+      if (slot !== -1) hotbar[slot] = null;
+    }
   }
 
   function collides(x,y,w,h) {
@@ -137,18 +250,49 @@
     if(player.grounded && !dead) { player.vy=-9.5; player.grounded=false; }
   }
 
-  function attack() {
+  function getHeldItem() {
+    const id = hotbar[selected];
+    return id ? { id, ...ITEMS[id] } : null;
+  }
+
+  function attackOrAction() {
     if(dead) return;
-    const px=player.x+player.w/2, py=player.y+player.h/2;
-    let target=null, best=55;
-    for(const m of mobs) {
-      const d=Math.hypot((m.x+m.w/2)-px,(m.y+m.h/2)-py);
-      if(d<best && (m.x-px)*player.facing > -8) { target=m; best=d; }
+    const item = getHeldItem();
+
+    // Bow Attack
+    if (item && item.id === "bow") {
+      if ((inventory["arrow"] || 0) > 0) {
+        removeItem("arrow", 1);
+        arrows.push({
+          x: player.x + player.w/2, y: player.y + 10,
+          vx: player.facing * 11, vy: -1.5,
+          life: 120
+        });
+      }
+      return;
     }
-    if(target) {
-      target.hp--;
-      target.vx=player.facing*4; target.vy=-3;
-      if(target.hp<=0) { mobs.splice(mobs.indexOf(target),1); score++; }
+
+    // Melee Attack
+    const px = player.x + player.w/2, py = player.y + player.h/2;
+    let reach = item && item.range ? item.range : 48;
+    let damage = item && item.dmg ? item.dmg : 1;
+
+    let target = null, best = reach;
+    for (const m of mobs) {
+      const d = Math.hypot((m.x+m.w/2)-px, (m.y+m.h/2)-py);
+      if (d < best && (m.x-px)*player.facing > -12) { target = m; best = d; }
+    }
+
+    if (target) {
+      target.hp -= damage;
+      target.vx = player.facing * 4; target.vy = -3;
+      if (target.hp <= 0) {
+        // Drop items
+        if (target.type === "cow") addItem("raw_beef", 1 + rnd(2));
+        if (target.type === "chicken") addItem("feather", 1 + rnd(2));
+        if (target.type === "spider") addItem("string", 1 + rnd(2));
+        mobs.splice(mobs.indexOf(target), 1);
+      }
     }
   }
 
@@ -161,46 +305,125 @@
 
   canvas.addEventListener("contextmenu", e=>e.preventDefault());
   canvas.addEventListener("mousedown", e=>{
-    if(dead) return;
+    if(dead || craftingOpen) return;
     const p=pointerTile(e);
     if(p.x<0||p.x>=W||p.y<0||p.y>=H) return;
-    if(e.button===0) {
-      const id=world[p.y][p.x];
-      if(id!==0) {
-        world[p.y][p.x]=0;
-        const kind=id===1?0:id===2?1:id===3?2:id===4?3:-1;
-        if(kind>=0) inventory[kind]++;
-      }
-    } else if(e.button===2) {
-      const id=[1,2,3,4][selected];
+
+    if(e.button===0) { // Left-click: Mine or Attack
       const px=player.x+player.w/2, py=player.y+player.h/2;
       const bx=p.x*S+S/2, by=p.y*S+S/2;
-      if(inventory[selected]>0 && world[p.y][p.x]===0 &&
-         Math.hypot(px-bx,py-by)<115 &&
-         !(p.x*S<player.x+player.w && (p.x+1)*S>player.x &&
-           p.y*S<player.y+player.h && (p.y+1)*S>player.y)) {
-        world[p.y][p.x]=id; inventory[selected]--;
+      
+      if (Math.hypot(px-bx, py-by) < 130) {
+        const id=world[p.y][p.x];
+        if(id!==TILE.AIR) {
+          const held = getHeldItem();
+          const pickTier = held && held.tool === "pick" ? held.tier : 0;
+
+          // Check tool requirements
+          if (id === TILE.IRON && pickTier < 2) return; // Iron requires Stone Pick+
+
+          world[p.y][p.x] = TILE.AIR;
+          if (id === TILE.GRASS) addItem("dirt");
+          else if (id === TILE.DIRT) addItem("dirt");
+          else if (id === TILE.STONE) addItem("stone");
+          else if (id === TILE.WOOD) addItem("wood");
+          else if (id === TILE.COAL) addItem("coal");
+          else if (id === TILE.IRON) addItem("raw_iron");
+          else if (id === TILE.FURNACE) addItem("furnace");
+        } else {
+          attackOrAction();
+        }
+      }
+    } else if(e.button===2) { // Right-click: Place or Use Block/Furnace/Food
+      const held = getHeldItem();
+      if (!held) return;
+
+      // Eat Food
+      if (held.food && hp < maxHp) {
+        hp = Math.min(maxHp, hp + held.food);
+        removeItem(held.id, 1);
+        return;
+      }
+
+      // Smelt at Furnace
+      if (world[p.y][p.x] === TILE.FURNACE) {
+        if ((inventory["raw_iron"] || 0) > 0 && (inventory["coal"] || 0) > 0) {
+          removeItem("raw_iron", 1);
+          removeItem("coal", 1);
+          addItem("iron_ingot", 1);
+        }
+        return;
+      }
+
+      // Place Block
+      if (held.block) {
+        const px=player.x+player.w/2, py=player.y+player.h/2;
+        const bx=p.x*S+S/2, by=p.y*S+S/2;
+        if(world[p.y][p.x]===TILE.AIR && Math.hypot(px-bx,py-by)<130 &&
+           !(p.x*S<player.x+player.w && (p.x+1)*S>player.x &&
+             p.y*S<player.y+player.h && (p.y+1)*S>player.y)) {
+          world[p.y][p.x] = held.block;
+          removeItem(held.id, 1);
+        }
       }
     }
   });
 
   addEventListener("keydown", e=>{
-    keys[e.key.toLowerCase()]=true;
-    if([" ","arrowup","arrowleft","arrowright"].includes(e.key.toLowerCase())) e.preventDefault();
+    const k = e.key.toLowerCase();
+    keys[k] = true;
+    if([" ","arrowup","arrowleft","arrowright"].includes(k)) e.preventDefault();
     if(e.repeat) return;
-    if(e.key===" "||e.key.toLowerCase()==="w"||e.key==="ArrowUp") jump();
-    if(e.key.toLowerCase()==="f") attack();
-    if(e.key.toLowerCase()==="r") reset();
-    if("1234".includes(e.key)) { selected=Number(e.key)-1; updateBar(); }
+    if(k===" "||k==="w"||k==="arrowup") jump();
+    if(k==="r") reset();
+    if(k==="e") toggleCrafting();
+    if("123456789".includes(k)) { selected = Number(k)-1; updateBar(); }
   });
   addEventListener("keyup", e=>keys[e.key.toLowerCase()]=false);
 
+  function toggleCrafting() {
+    craftingOpen = !craftingOpen;
+    craftMenu.classList.toggle("open", craftingOpen);
+    if(craftingOpen) renderCrafting();
+  }
+
+  function renderCrafting() {
+    craftGrid.innerHTML = "";
+    RECIPES.forEach(r => {
+      const item = ITEMS[r.id];
+      let canCraft = true;
+      let costStr = [];
+
+      for (const [reqId, qty] of Object.entries(r.req)) {
+        const have = inventory[reqId] || 0;
+        costStr.push(`${qty} ${ITEMS[reqId].name}`);
+        if (have < qty) canCraft = false;
+      }
+
+      const btn = document.createElement("div");
+      btn.className = `craft-btn ${canCraft ? "" : "disabled"}`;
+      btn.innerHTML = `<strong>${item.name}</strong> (x${r.yield || 1})<div class="craft-cost">${costStr.join(", ")}</div>`;
+      
+      if (canCraft) {
+        btn.onclick = () => {
+          for (const [reqId, qty] of Object.entries(r.req)) removeItem(reqId, qty);
+          addItem(r.id, r.yield || 1);
+          renderCrafting();
+          updateBar();
+        };
+      }
+      craftGrid.appendChild(btn);
+    });
+  }
+
   function updateBar() {
     bar.innerHTML="";
-    names.forEach((n,i)=>{
+    hotbar.forEach((id, i)=>{
       const d=document.createElement("div");
       d.className="slot"+(i===selected?" sel":"");
-      d.textContent=`${i+1} · ${n} (${inventory[i]})`;
+      const item = id ? ITEMS[id] : null;
+      const count = id ? (inventory[id] || 0) : 0;
+      d.textContent = item ? `${i+1} · ${item.name} (${count})` : `${i+1} · -`;
       bar.appendChild(d);
     });
   }
@@ -217,16 +440,57 @@
       moveBody(player,0,player.vy);
       if(player.y>H*S) { hp=0; dead=true; }
 
+      // Mobs logic
       for(const m of mobs) {
         m.wait--;
-        if(m.wait<=0) { m.vx=Math.sign(player.x-m.x)*1.25; m.wait=30+rnd(60); }
-        m.vy=Math.min(10,m.vy+.4);
-        moveBody(m,m.vx,m.vy);
-        if(Math.abs(player.x-m.x)<25 && Math.abs(player.y-m.y)<25 && player.hurt<=0) {
-          hp--; player.hurt=55; player.vy=-5; player.vx=player.x<m.x?-4:4;
+        if(m.wait<=0) {
+          if (m.type === "slime" || m.type === "spider") {
+            m.vx = Math.sign(player.x - m.x) * (m.type === "spider" ? 1.8 : 1.2);
+            if (m.type === "spider" && collides(m.x + m.vx*5, m.y, m.w, m.h)) m.vy = -6; // Spider climb
+          } else {
+            m.vx = (Math.random() - 0.5) * 1.5; // Passive wander
+          }
+          m.wait = 40 + rnd(80);
+        }
+        m.vy = Math.min(10, m.vy + .4);
+        moveBody(m, m.vx, m.vy);
+
+        // Hostile attack player
+        if ((m.type === "slime" || m.type === "spider") &&
+            Math.abs(player.x-m.x)<22 && Math.abs(player.y-m.y)<22 && player.hurt<=0) {
+          hp -= (m.type === "spider" ? 2 : 1);
+          player.hurt = 50; player.vy = -5; player.vx = player.x < m.x ? -4 : 4;
           if(hp<=0) dead=true;
         }
       }
+
+      // Arrows physics
+      for (let i = arrows.length - 1; i >= 0; i--) {
+        const a = arrows[i];
+        a.x += a.vx; a.y += a.vy; a.vy += 0.2; a.life--;
+
+        // Arrow collision with solid ground
+        if (collides(a.x, a.y, 4, 4) || a.life <= 0) {
+          arrows.splice(i, 1);
+          continue;
+        }
+
+        // Arrow collision with mobs
+        for (const m of mobs) {
+          if (a.x > m.x && a.x < m.x + m.w && a.y > m.y && a.y < m.y + m.h) {
+            m.hp -= 3; m.vx = Math.sign(a.vx) * 3; m.vy = -2;
+            if (m.hp <= 0) {
+              if (m.type === "cow") addItem("raw_beef", 1 + rnd(2));
+              if (m.type === "chicken") addItem("feather", 1 + rnd(2));
+              if (m.type === "spider") addItem("string", 1 + rnd(2));
+              mobs.splice(mobs.indexOf(m), 1);
+            }
+            arrows.splice(i, 1);
+            break;
+          }
+        }
+      }
+
       if(player.hurt>0) player.hurt--;
     }
 
@@ -240,29 +504,48 @@
     ctx.fillStyle=`rgb(${Math.round(20+daylight*108)},${Math.round(34+daylight*165)},${Math.round(70+daylight*180)})`;
     ctx.fillRect(0,0,canvas.width,canvas.height);
 
-    // Sun and moon
+    // Sun & Moon
     ctx.fillStyle="#fff3a6";
     ctx.beginPath(); ctx.arc(90+daylight*700,85,22,0,Math.PI*2); ctx.fill();
 
+    // Map Rendering
     const x0=Math.max(0,Math.floor(cameraX/S)), x1=Math.min(W,Math.ceil((cameraX+canvas.width)/S));
     const y0=Math.max(0,Math.floor(cameraY/S)), y1=Math.min(H,Math.ceil((cameraY+canvas.height)/S));
     for(let y=y0;y<y1;y++) for(let x=x0;x<x1;x++) {
       const id=world[y][x]; if(!id) continue;
       const sx=x*S-cameraX, sy=y*S-cameraY;
-      const c=id===1?colors[0]:id===2?colors[1]:id===3?colors[2]:id===4?colors[3]:"#397d41";
-      ctx.fillStyle=c; ctx.fillRect(sx,sy,S,S);
-      ctx.fillStyle="rgba(255,255,255,.12)"; ctx.fillRect(sx,sy,S,3);
-      ctx.strokeStyle="rgba(0,0,0,.12)"; ctx.strokeRect(sx,sy,S,S);
-      if(id===1) { ctx.fillStyle="#56a83c"; ctx.fillRect(sx,sy,S,5); }
+      ctx.fillStyle = tileColors[id] || "#fff";
+      ctx.fillRect(sx,sy,S,S);
+      ctx.fillStyle="rgba(255,255,255,.1)"; ctx.fillRect(sx,sy,S,3);
+      ctx.strokeStyle="rgba(0,0,0,.15)"; ctx.strokeRect(sx,sy,S,S);
+      if(id===TILE.GRASS) { ctx.fillStyle="#56a83c"; ctx.fillRect(sx,sy,S,5); }
     }
 
+    // Render Mobs
     for(const m of mobs) {
       const sx=m.x-cameraX, sy=m.y-cameraY;
-      ctx.fillStyle="#55d676"; ctx.fillRect(sx,sy,m.w,m.h);
-      ctx.fillStyle="#eaffef"; ctx.fillRect(sx+4,sy+5,4,4); ctx.fillRect(sx+14,sy+5,4,4);
-      ctx.fillStyle="#173b27"; ctx.fillRect(sx+5,sy+6,2,2); ctx.fillRect(sx+15,sy+6,2,2);
+      if (m.type === "slime") {
+        ctx.fillStyle="#55d676"; ctx.fillRect(sx,sy,m.w,m.h);
+        ctx.fillStyle="#eaffef"; ctx.fillRect(sx+4,sy+4,4,4); ctx.fillRect(sx+14,sy+4,4,4);
+      } else if (m.type === "spider") {
+        ctx.fillStyle="#382424"; ctx.fillRect(sx,sy,m.w,m.h);
+        ctx.fillStyle="#ff2b2b"; ctx.fillRect(sx+4,sy+3,3,3); ctx.fillRect(sx+10,sy+3,3,3);
+      } else if (m.type === "cow") {
+        ctx.fillStyle="#6b462b"; ctx.fillRect(sx,sy,m.w,m.h);
+        ctx.fillStyle="#ffffff"; ctx.fillRect(sx+6,sy+4,8,8);
+      } else if (m.type === "chicken") {
+        ctx.fillStyle="#ffffff"; ctx.fillRect(sx,sy,m.w,m.h);
+        ctx.fillStyle="#ff2b2b"; ctx.fillRect(sx+10,sy+6,4,3);
+      }
     }
 
+    // Render Projectiles (Arrows)
+    ctx.fillStyle = "#fff";
+    for (const a of arrows) {
+      ctx.fillRect(a.x - cameraX, a.y - cameraY, 5, 2);
+    }
+
+    // Render Player
     if(!player.hurt || Math.floor(tick/5)%2===0) {
       const sx=player.x-cameraX, sy=player.y-cameraY;
       ctx.fillStyle="#315bd8"; ctx.fillRect(sx+2,sy+10,13,20);
@@ -272,19 +555,18 @@
     }
 
     // HUD
-    ctx.fillStyle="rgba(0,0,0,.45)"; ctx.fillRect(10,10,165,48);
-    ctx.fillStyle="#fff"; ctx.font="15px system-ui";
-    ctx.fillText("Health: "+ "♥".repeat(Math.max(0,hp))+"♡".repeat(Math.max(0,10-hp)),18,30);
-    ctx.fillText("Slimes defeated: "+score,18,49);
+    ctx.fillStyle="rgba(0,0,0,.5)"; ctx.fillRect(10,10,190,40);
+    ctx.fillStyle="#fff"; ctx.font="14px system-ui";
+    ctx.fillText("Health: "+ "♥".repeat(Math.max(0,hp))+"♡".repeat(Math.max(0,10-hp)),18,34);
 
     if(dead) {
-      ctx.fillStyle="rgba(0,0,0,.66)"; ctx.fillRect(0,0,canvas.width,canvas.height);
+      ctx.fillStyle="rgba(0,0,0,.7)"; ctx.fillRect(0,0,canvas.width,canvas.height);
       ctx.fillStyle="#fff"; ctx.textAlign="center";
-      ctx.font="bold 38px system-ui"; ctx.fillText("You were bonked!",canvas.width/2,canvas.height/2-8);
-      ctx.font="18px system-ui"; ctx.fillText("Press R to make a new world",canvas.width/2,canvas.height/2+28);
+      ctx.font="bold 36px system-ui"; ctx.fillText("You Died!",canvas.width/2,canvas.height/2-10);
+      ctx.font="16px system-ui"; ctx.fillText("Press R to Respawn",canvas.width/2,canvas.height/2+25);
       ctx.textAlign="left";
     }
-    status.textContent=dead?"Game over · press R to restart":`♥ ${hp}/10 · Slimes ${score} · ${daylight>.35?"Day":"Night"}`;
+    status.textContent=dead?"Game Over":`♥ ${hp}/10 · ${daylight>.35?"Daytime":"Nighttime"}`;
   }
 
   function loop() { update(); draw(); requestAnimationFrame(loop); }
