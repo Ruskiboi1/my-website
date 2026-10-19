@@ -13,6 +13,10 @@ p1 {
     color: #FFFFFF;
 }
 
+p2 {
+    color: #FFFFFF;
+}
+
 p3 {
     color: #FFFFFF;
 }
@@ -23,5 +27,5 @@ ul {
 }
 
 ol {
-    color: #007e61
+    color: #007e61;
 }
