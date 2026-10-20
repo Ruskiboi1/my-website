@@ -3,8 +3,10 @@
 <head>
     <title>My Project</title>
     <link rel="stylesheet" href="style.css">
+    <script type="text/javascript" src="https://cdn.jsdelivr.net/npm/brython@3/brython.min.js"></script>
+    <script type="text/javascript" src="https://cdn.jsdelivr.net/npm/brython@3/brython_stdlib.js"></script>
 </head>
-<body>
+<body onload="brython()">
     <h1>Hello, World!</h1>
     <p1> Hello, welcome to my website, this is where I test my coding skills in HTML.
     <br> Second game added!! It is called 2d minecraft, so far it is in constant updates. I will start working on the third game, if you have any suggestions email me at <a href="mailto:therussiankiller6@outlook.com">therussiankiller6@outlook.com</a> More games to be added soon.
@@ -18,14 +20,16 @@
     <br> <img src="images/jinx.jpeg" height="300" alt="if you're seeing this an image of jinx didnt load"> 
     <img src="images/inej.jpeg" height="300" alt="if you're seeing this an image of inej didn't load"> 
     <img src="images/wall.jpeg" height="300" alt=" if you're seeing this an image of a wall didn't load">
+    <script type="text/python" src="main.py"></script>
     <script src="script.js"></script> </p3>
 </body>
- <!-- Game Window Container -->
+ <!-- ray caster game -->
 <iframe 
     src="raycaster_engine_prototype.html" 
     style="width: 50%; height: 540px; border: none;"
     allowfullscreen>
 </iframe>
+    <!-- 2d minecraft game-->
 <iframe 
     src="2dminecraft.html" 
     style="width: 50%; height: 540px; border: none;"
