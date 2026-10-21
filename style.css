@@ -34,6 +34,9 @@ button {
     color: #ffffff;
     background-color: #3a3737;
     cursor: pointer;
-    border-radius: 7px;
-    
+    border-radius: 7px;    
+}
+
+a {
+    color: #5a5959;
 }
