@@ -34,5 +34,6 @@ button {
     color: #ffffff;
     background-color: #808080;
     cursor: pointer;
+    border-radius: 7px;
     
 }
