@@ -29,3 +29,10 @@ ul {
 ol {
     color: #007e61;
 }
+
+button {
+    color: #ffffff;
+    background-color: #000000;
+    cursor: pointer;
+    
+}
